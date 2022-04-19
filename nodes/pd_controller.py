@@ -20,7 +20,7 @@ def time_plotter(t, drone_states, payload_states, setpoint):
         fig, ax = plt.subplots()
         ax.set_title(f'Slung payload {axes[i]}-movement vs time')
         ax.plot(t, drone_states[:, i], color='red', label=f'Drone {axes[i]} movement')
-        ax.plot(t, payload_states[:, i], color='blue', label=f'Payload {axes[i]} movement')
+        ax.plot(t, payload_states[:, i], '--', color='blue', label=f'Payload {axes[i]} movement')
         ax.plot(t, setpoint[:, i], ':', color='black', label=f'Drone {axes[i]}-reference')
         ax.set_xlabel(f't [s]')
         ax.set_ylabel(f'{axes[i]} [m]')

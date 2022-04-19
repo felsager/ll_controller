@@ -21,5 +21,5 @@ if __name__ == '__main__':
     except rospy.ROSInterruptException:
         print("error!")
     # commented out to not repeat plot
-    # time_plotter(pdController.time, pdController.drone_states, \
-    #     pdController.payload_states, pdController.setpoints)
+    time_plotter(pdController.time, pdController.drone_states, \
+    pdController.payload_states, pdController.setpoints)
