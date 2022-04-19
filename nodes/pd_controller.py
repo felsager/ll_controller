@@ -15,21 +15,19 @@ import matplotlib.pyplot as plt
 
 def time_plotter(t, drone_states, payload_states, setpoint):
     os.chdir('/home/felsager/Workspaces/auro_ws/src/ll_controller/plots')
-    fig, ax = plt.subplots(nrows=3, ncols=1) 
     axes = 'xyz'
-    print()
     for i in range(3):
-        if i == 1:
-            ax[i].set_title(f'Slung payload axes movement as functions of time')
-        ax[i].plot(t, drone_states[:, i], color='red', label=f'Drone {axes[i]} movement')
-        ax[i].plot(t, payload_states[:, i], color='blue', label=f'Payload {axes[i]} movement')
-        ax[i].plot(t, setpoint[:, i], ':', color='black', label=f'Drone {axes[i]}-reference')
-        ax[i].set_xlabel(f't [s]')
-        ax[i].set_ylabel(f'{axes[i]} [m]')
-        ax[i].legend(loc='upper left', fancybox=True)
-        ax[i].grid()
-    fig.tight_layout()
-    fig.savefig(f'slung_payload_time_movement_pd.svg', format='svg')
+        fig, ax = plt.subplots()
+        ax.set_title(f'Slung payload {axes[i]}-movement vs time')
+        ax.plot(t, drone_states[:, i], color='red', label=f'Drone {axes[i]} movement')
+        ax.plot(t, payload_states[:, i], color='blue', label=f'Payload {axes[i]} movement')
+        ax.plot(t, setpoint[:, i], ':', color='black', label=f'Drone {axes[i]}-reference')
+        ax.set_xlabel(f't [s]')
+        ax.set_ylabel(f'{axes[i]} [m]')
+        ax.legend(loc='upper left', fancybox=True)
+        ax.grid()
+        fig.tight_layout()
+        fig.savefig(f'slung_payload_{axes[i]}_time_movement_pd.svg', format='svg')
 
 os.chdir('/home/felsager/Workspaces/auro_ws/src/ll_controller/csv')
 
@@ -43,16 +41,18 @@ class PDController:
         # Publisher for PX4 attitude offboard control
         self.attitude_pub = rospy.Publisher('mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=10) 
         
-        # Necessary for keeping OFFBOARD on
+        # Control callback necessary for keeping OFFBOARD on
         self.control_period = 0.01
         self.control_timer = rospy.Timer(rospy.Duration(self.control_period), self.control_callback)
 
+        # Mavros pose and twist subscribers
         self.pose_sub = rospy.Subscriber('/mavros/local_position/pose', PoseStamped, self.pose_callback, queue_size=10) 
         self.velocity_sub = rospy.Subscriber('/mavros/local_position/velocity_body', TwistStamped, self.velocity_callback, queue_size=10)
         
         # Gazebo ground truth subscriber of drone and payload state
         self.state_subscriber = rospy.Subscriber('/gazebo/link_states', LinkStates, self.state_callback)
 
+        # Arrays for saving time and states of drone and payload
         self.drone_states = []
         self.current_drone_state = [0, 0, 0]
         self.payload_states = []
@@ -61,6 +61,7 @@ class PDController:
 
         self.time = [0]
 
+        # Arrays for saving variables needed in control
         self.position = np.zeros(3)
         self.velocity = np.zeros(3)
         self.orientation = np.zeros(3)
@@ -72,13 +73,16 @@ class PDController:
         self.kp_att = 0.5
         self.kd_att = -0.4
 
+        # Waypoint initialization
         self.waypoints = np.array(waypoints)
         self.waypoint_no = waypoints.shape[0]
         self.waypoint_ind = 0
         self.current_waypoint = waypoints[0,:]
 
+        # Error norm threshhold (error margin)
         self.error_threshold = 0.1
 
+        # Change mode to offboard and arm the drone
         self.initialize_drone()
         print('Going to ', self.current_waypoint)      
 
@@ -99,6 +103,8 @@ class PDController:
     def update_waypoint(self):
         """ Increment waypoint index and set current waypoint"""
         self.waypoint_ind += 1
+        if self.waypoint_ind >= self.waypoint_no:
+            rospy.signal_shutdown('Last waypoint has been reached') # Problem with different threads not shutting down immediately 
         self.current_waypoint = self.waypoints[self.waypoint_ind]    
 
     def control_callback(self, event):
@@ -110,13 +116,10 @@ class PDController:
         error, dist_error = self.get_position_error()
         if dist_error < self.error_threshold:
             if self.waypoint_ind == self.waypoint_no - 1:
-                time = np.array(self.time)[2:]
-                drone_states = np.array(self.drone_states)[1:]
-                payload_states = np.array(self.payload_states)[1:]
-                setpoints = np.array(self.setpoints)[1:]
-                print(f'{[time.shape, drone_states.shape, payload_states.shape] = }')
-                time_plotter(time, drone_states, payload_states, setpoints)
-                rospy.signal_shutdown('Last waypoint has been reached')
+                self.time = np.array(self.time)[:-251]
+                self.drone_states = np.array(self.drone_states)[250:]
+                self.payload_states = np.array(self.payload_states)[250:]
+                self.setpoints = np.array(self.setpoints)[250:]
             self.update_waypoint()
             error, dist_error = self.get_position_error()
             print('Going to ', self.current_waypoint)
@@ -139,6 +142,7 @@ class PDController:
         return error, dist_err
 
     def thrust_controller(self, e_z, v_z, pitch, roll):
+        """ PD position control of drone thrust. """
         angle_compensation = abs(np.cos(pitch)*np.cos(roll))
         if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
             angle_compensation = 0.5  
@@ -147,6 +151,7 @@ class PDController:
         return thrust
 
     def attitude_controller(self, e_x, e_y, v_x, v_y):
+        """ PD position control of drone pitch and roll. """
         pitch = (self.kp_att*e_x + self.kd_att*v_x)
         roll = -(self.kp_att*e_y + self.kd_att*v_y)
         if abs(roll) > 0.3: # saturate angles to pi/4
