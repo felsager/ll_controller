@@ -6,7 +6,7 @@ import rospy
 import numpy as np
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 import os
-from geometry_msgs.msg import PoseStamped, TwistStamped, Quaternion
+from geometry_msgs.msg import TwistStamped, Quaternion
 from gazebo_msgs.msg import LinkStates
 from mavros_msgs.srv import SetMode
 from mavros_msgs.srv import CommandBool
@@ -46,7 +46,7 @@ class PDController:
         self.control_timer = rospy.Timer(rospy.Duration(self.control_period), self.control_callback)
 
         # Mavros pose and twist subscribers
-        self.pose_sub = rospy.Subscriber('/mavros/local_position/pose', PoseStamped, self.pose_callback, queue_size=10) 
+        #self.pose_sub = rospy.Subscriber('/mavros/local_position/pose', PoseStamped, self.pose_callback, queue_size=10) 
         self.velocity_sub = rospy.Subscriber('/mavros/local_position/velocity_body', TwistStamped, self.velocity_callback, queue_size=10)
         
         # Gazebo ground truth subscriber of drone and payload state
@@ -86,13 +86,14 @@ class PDController:
         self.initialize_drone()
         print('Going to ', self.current_waypoint)      
 
-    def pose_callback(self, data):
+    '''def pose_callback(self, data):
         """ Callback for drone pose subscriber """
         self.position[0] = data.pose.position.x
         self.position[1] = data.pose.position.y
         self.position[2] = data.pose.position.z
         q = data.pose.orientation
         self.orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
+    '''
 
     def velocity_callback(self, data):
         """ Callback for drone velocity subscriber"""
@@ -137,8 +138,14 @@ class PDController:
 
     def get_position_error(self):
         """ Calculate position error as vector from drone to desired waypoint. """
-        error = np.subtract(self.current_waypoint, self.position) 
-        dist_err = np.linalg.norm(error)
+        error = np.subtract(self.current_waypoint, self.position)
+        payload_error = np.subtract(self.current_drone_state, self.current_payload_state)
+        payload_angle = np.arctan2(payload_error[2], payload_error[0]) - np.pi/2
+        payload_angle = -np.arctan2(np.sin(payload_angle),np.cos(payload_angle))
+        print(f'Orientation: {self.orientation}')
+        print(f'Payload angle: {payload_angle}')
+        print(f'Orientation error: {self.orientation[1] - payload_angle}')
+        dist_err = np.linalg.norm(error[::2])
         return error, dist_err
 
     def thrust_controller(self, e_z, v_z, pitch, roll):
@@ -154,11 +161,9 @@ class PDController:
         """ PD position control of drone pitch and roll. """
         pitch = (self.kp_att*e_x + self.kd_att*v_x)
         roll = -(self.kp_att*e_y + self.kd_att*v_y)
-        if abs(roll) > 0.3: # saturate angles to pi/4
-            roll = np.sign(roll)*0.3
-        if abs(pitch) > 0.3:
-            pitch = np.sign(pitch)*0.3  
-        #print(f'{[roll, pitch] = }')
+        pitch = np.clip(pitch, -0.52, 0.52) # clip angles to range -pi/6, pi/6 (angles are not normalized)
+        roll = np.clip(roll, -0.52, 0.52)
+        roll = 0
         return Quaternion(*quaternion_from_euler(roll, pitch, 0))
     
     def state_callback(self, data):
@@ -169,15 +174,18 @@ class PDController:
         self.current_payload_state[0] = data.pose[-1].position.x # index -1 (last) is payload in gazebo
         self.current_payload_state[1] = data.pose[-1].position.y
         self.current_payload_state[2] = data.pose[-1].position.z
+        self.position = self.current_drone_state
+        q = data.pose[1].orientation
+        self.orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
 
     def initialize_drone(self):
         """ Set mode to "OFFBOARD" and arm the drone. """
         # Publish control setpoints to PX4 controller so mode can be change to "OFFBOARD"
-        rate = rospy.Rate(50)
+        rate = rospy.Rate(500)
         for i in range(150):
             msg = AttitudeTarget()
             msg.type_mask = 7
-            msg.thrust = 2
+            msg.thrust = 0
             msg.orientation = Quaternion(*quaternion_from_euler(0, 0, 0))
             self.attitude_pub.publish(msg)
             rate.sleep()
