@@ -126,10 +126,9 @@ class PayloadEnv(gym.Env):
                     joint_positions = self.joint_positions)
 
         self.current_drone_state = [0, 20]
-        # generate which side of both x and z the goal are placed
-        sides = np.power(-np.ones(2,dtype=int), np.random.randint(1, size=2)) 
-        x_des = 10*sides[0] + 2*np.random.randn(1) # std = 2, mu = {-10, 10} 
-        z_des = 20 + sides[1] + 0.2*np.random.randn(1) # std = 0.2, mu = {-1, 1}
+        # generate random side of both x and z where the desired position is placed 
+        x_des = np.random.uniform(-10, 10) # avoiding overfitting
+        z_des = np.random.uniform(-0.5, 0.5)
         self.x_normalized = abs(x_des)
         self.z_normalized = abs(z_des)
         self.desired_position = [x_des, z_des]
