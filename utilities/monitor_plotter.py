@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
-log_dir = "/home/felsager/Documents"
+log_dir = "/tmp/gym/"
 
 def moving_average(values, window):
     """
