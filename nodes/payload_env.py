@@ -32,7 +32,8 @@ class PayloadEnv(gym.Env):
         self.z_normalize = 1 # position normalization factor in z
         self.v_x_normalize = 5 # velocity normalization factor in x
         self.v_z_normalize = 1 # velocity normalization factor in z
-        
+
+        self.norm_normalize = 1
 
         self.state = np.zeros(7, dtype=np.float32) # saving state for PD controller
 
@@ -105,7 +106,7 @@ class PayloadEnv(gym.Env):
         # when should the episode finish and reset
         if normed_pos_error < 0.1 and normed_velocity < 0.25: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             done = True
-            reward += 100 - 2*time_used # more reward for higher velocity
+            reward += 150 - 2*time_used/self.norm_normalize # more reward for higher velocity
         elif time_used > 25 or normed_pos_error > 30: # changed time stop from 50 -> 20 so reward is not just accumalated
             done = True
             reward -= 100 
@@ -134,6 +135,7 @@ class PayloadEnv(gym.Env):
         z_des = 20 + np.random.uniform(-0.5, 0.5) # +20 bias for same height as drone starts in
         self.x_normalize = abs(x_des)
         self.z_normalize = abs(z_des)
+        self.norm_normalize = np.sqrt(self.x_normalize**2+self.z_normalize**2)
         self.desired_position = [x_des, z_des]
         state = self.calculate_state()
         self.start_time = rospy.get_time()
