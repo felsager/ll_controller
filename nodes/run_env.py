@@ -14,13 +14,13 @@ env = PayloadEnv(pd_control=False)
 env = Monitor(env, log_dir)
 
 #model = SAC('MlpPolicy', env)
-model = SAC.load('model/trained_model_new_obs_4_5', env=env)
+model = SAC.load('model/trained_model_new_obs_5_4', env=env)
 
 '''
 for i in range(1, 5):
     for j in range(10): # save more often
         model.learn(total_timesteps=int(1e4))
-        model.save(f'model/trained_model_new_obs_4_{i}')
+        model.save(f'model/trained_model_new_obs_{run_no}_{i}')
 
 '''
 obs = env.reset()

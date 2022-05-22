@@ -111,7 +111,7 @@ class PayloadEnv(gym.Env):
         elif time_used > 25: # changed time stop from 50 -> 20 so reward is not just accumalated
             done = True
             reward -= 100 
-        elif self.v_z < -6 or self.current_drone_state[1] < 2 or abs(self.drone_yaw) > 0.1  or normed_pos_error > 30:
+        elif self.v_z < -6 or self.current_drone_state[1] < 2 or abs(self.drone_yaw) > 0.2  or normed_pos_error > 30:
             done = True
             reward -= 150 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
