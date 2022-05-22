@@ -60,6 +60,7 @@ class PayloadEnv(gym.Env):
         self.payload_states = []
         self.current_payload_state = [0, 0]
         self.drone_pitch = 0
+        self.drone_yaw = 0
         self.drone_pitch_normalized = 0
         self.desired_position = np.zeros(2)
         
@@ -107,12 +108,12 @@ class PayloadEnv(gym.Env):
         if normed_pos_error < 0.1 and normed_velocity < 0.25: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             done = True
             reward += 150 - 2*time_used/self.norm_normalize # more reward for higher velocity
-        elif time_used > 25 or normed_pos_error > 30: # changed time stop from 50 -> 20 so reward is not just accumalated
+        elif time_used > 25: # changed time stop from 50 -> 20 so reward is not just accumalated
             done = True
             reward -= 100 
-        elif self.v_z < -6 or self.current_drone_state[1] < 2:
+        elif self.v_z < -6 or self.current_drone_state[1] < 2 or abs(self.drone_yaw) > 0.1  or normed_pos_error > 30:
             done = True
-            reward -= 100 # stronger punishment for just falling to the ground
+            reward -= 150 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -138,8 +139,11 @@ class PayloadEnv(gym.Env):
         self.norm_normalize = np.sqrt(self.x_normalize**2+self.z_normalize**2)
         self.desired_position = [x_des, z_des]
         state = self.calculate_state()
-        self.start_time = rospy.get_time()
         self.pre_e_theta = 0
+        self.drone_pitch = 0
+        self.drone_pitch_normalized = 0
+        self.drone_yaw = 0
+        self.start_time = rospy.get_time()
         return state
     
     def calculate_state(self):
@@ -218,7 +222,9 @@ class PayloadEnv(gym.Env):
         self.v_x = data.twist[1].linear.x
         self.v_z = data.twist[1].linear.z
         q = data.pose[1].orientation
-        self.drone_pitch = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))[1]
+        orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
+        self.drone_pitch = orientation[1]
+        self.drone_yaw = orientation[2]
         self.drone_pitch_normalized = self.drone_pitch/np.pi
 
     def initialize_drone(self):

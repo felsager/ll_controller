@@ -5,17 +5,19 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import SAC
 import os
 
-log_dir = "/home/felsager/Documents/gym/"
+run_no = 6
+
+log_dir = f'/home/felsager/Documents/gym/{run_no}/'
 os.makedirs(log_dir, exist_ok=True)
 
 env = PayloadEnv(pd_control=False)
 env = Monitor(env, log_dir)
 
 #model = SAC('MlpPolicy', env)
-model = SAC.load('model/trained_model_new_obs_3_2', env=env)
+model = SAC.load('model/trained_model_new_obs_4_5', env=env)
 
-
-for i in range(1, 10):
+'''
+for i in range(1, 5):
     for j in range(10): # save more often
         model.learn(total_timesteps=int(1e4))
         model.save(f'model/trained_model_new_obs_4_{i}')
@@ -28,6 +30,6 @@ for i in range(20000):
     print(info)
     if done:
         obs = env.reset()
-'''
+
 
 
