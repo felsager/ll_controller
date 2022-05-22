@@ -65,11 +65,13 @@ class PayloadEnv(gym.Env):
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
         self.k_alpha = 0.7 # position error reward coefficient
         self.k_beta = 0.07 # velocity reward coefficient - velocity is not normalized and should have a lower coefficient?
-        self.k_theta = 0.2 # theta error reward coefficient
+        self.k_theta = 0.3 # theta error reward coefficient
         self.k_delta = 0.1 # theta error dot reward coefficient
-        self.k_gamma = 0.16 # pitch angle reward coefficient
+        self.k_gamma = 0.06 # pitch angle reward coefficient
 
         self.pre_e_theta = 0
+        self.e_theta_dot = 0
+        self.step_counter = 1
 
         self.step_size = 0.01
         rate = int(1/self.step_size)
@@ -97,17 +99,19 @@ class PayloadEnv(gym.Env):
         normed_pos_error = np.linalg.norm(state[:2])
         normed_velocity = np.linalg.norm(state[2:4])
         reward = self.calculate_reward(state)
+        print(f'{state = }')
+        print(f'{reward = }')
         time_used = rospy.get_time() - self.start_time
         # when should the episode finish and reset
         if normed_pos_error < 0.1 and normed_velocity < 0.25: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             done = True
-            reward += 10 
-        elif self.v_z < -6 or self.current_drone_state[1] < 0.5:
+            reward += 100 - 2*time_used # more reward for higher velocity
+        elif time_used > 25 or normed_pos_error > 30: # changed time stop from 50 -> 20 so reward is not just accumalated
             done = True
-            reward -= 30 # stronger punishment for just falling to the ground
-        elif time_used > 50 or normed_pos_error > 30:
+            reward -= 100 
+        elif self.v_z < -6 or self.current_drone_state[1] < 2:
             done = True
-            reward -= 10 
+            reward -= 100 # stronger punishment for just falling to the ground
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -147,11 +151,15 @@ class PayloadEnv(gym.Env):
         e_x /= self.x_normalize # normalize to maximum desired distance
         e_z /= self.z_normalize
         e_theta /= np.pi # normalize angle
-        e_theta_dot = (e_theta - self.pre_e_theta)/(2*self.step_size) # doesn't need to be normalized - e_theta is already normalized
-        self.pre_e_theta = e_theta
+        if e_theta == self.pre_e_theta:
+            self.step_counter += 1
+        else:
+            self.e_theta_dot = (e_theta - self.pre_e_theta)/(2*self.step_size*self.step_counter) # doesn't need to be normalized - e_theta is already normalized
+            self.pre_e_theta = e_theta
+            self.step_counter = 1
         v_x_normalized = self.v_x/self.v_x_normalize
         v_z_normalized = self.v_z/self.v_z_normalize
-        return np.array([e_x, e_z, v_x_normalized, v_z_normalized, e_theta, e_theta_dot, self.drone_pitch_normalized], dtype=np.float32)
+        return np.array([e_x, e_z, v_x_normalized, v_z_normalized, e_theta, self.e_theta_dot, self.drone_pitch_normalized], dtype=np.float32)
 
     def calculate_reward(self, state):
         """ Calculate the reward. """

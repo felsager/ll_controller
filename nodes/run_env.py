@@ -11,14 +11,14 @@ os.makedirs(log_dir, exist_ok=True)
 env = PayloadEnv(pd_control=False)
 env = Monitor(env, log_dir)
 
-model = SAC('MlpPolicy', env)
-#model = SAC.load('model/trained_model_new_obs_1_0', env=env)
+#model = SAC('MlpPolicy', env)
+model = SAC.load('model/trained_model_new_obs_3_2', env=env)
 
 
-for i in range(16):
+for i in range(1, 10):
     for j in range(10): # save more often
         model.learn(total_timesteps=int(1e4))
-        model.save(f'model/trained_model_new_obs_1_{i}')
+        model.save(f'model/trained_model_new_obs_4_{i}')
 
 '''
 obs = env.reset()
