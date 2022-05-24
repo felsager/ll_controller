@@ -2,7 +2,6 @@
 
 import gym
 from gym import spaces
-import torch
 import rospy
 import numpy as np
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
@@ -12,12 +11,10 @@ from mavros_msgs.srv import CommandBool
 from mavros_msgs.msg import AttitudeTarget
 from std_srvs.srv import Empty
 from gazebo_msgs.srv import SetModelConfiguration, SetModelState, GetModelState
-from gazebo_msgs.msg import ModelState, ModelStates
-import subprocess
-import time
+from gazebo_msgs.msg import ModelState, LinkStates
 
 class PayloadEnv(gym.Env):
-    def __init__(self, pd_control):
+    def __init__(self, pd_control, infinite_goal):
         ''' Initialize GYM environment. '''
         rospy.init_node(f'env_node')
         
@@ -25,7 +22,7 @@ class PayloadEnv(gym.Env):
         self.attitude_pub = rospy.Publisher('mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=10)
 
         # Gazebo ground truth subscriber of drone and payload state
-        self.gazebo_state_subscriber = rospy.Subscriber('/gazebo/model_states', ModelStates, self.gazebo_state_callback)
+        self.gazebo_state_subscriber = rospy.Subscriber('/gazebo/link_states', LinkStates, self.gazebo_state_callback)
         self.v_x = 0
         self.v_z = 0
         self.x_normalize = 10 # position normalization factor in x
@@ -40,7 +37,9 @@ class PayloadEnv(gym.Env):
         # Initial control action
         self.thrust = 0.7
         self.pitch = 0
+        self.roll = 0
         self.pd_control = pd_control # boolean for switching between RL and PD controller
+        self.infinite_goal = infinite_goal
 
         # Reset environment utilities
         self.pause_physics = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
@@ -63,13 +62,14 @@ class PayloadEnv(gym.Env):
         self.drone_yaw = 0
         self.drone_pitch_normalized = 0
         self.desired_position = np.zeros(2)
+        self.e_y = 0
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
         self.k_alpha = 0.7 # position error reward coefficient
         self.k_beta = 0.07 # velocity reward coefficient - velocity is not normalized and should have a lower coefficient?
-        self.k_theta = 0.3 # theta error reward coefficient
+        self.k_theta = 0.35 # theta error reward coefficient
         self.k_delta = 0.1 # theta error dot reward coefficient
-        self.k_gamma = 0.06 # pitch angle reward coefficient
+        self.k_gamma = 0.01 # pitch angle reward coefficient
 
         self.pre_e_theta = 0
         self.e_theta_dot = 0
@@ -86,6 +86,7 @@ class PayloadEnv(gym.Env):
                 joint_names = self.joint_names, \
                     joint_positions = self.joint_positions)
             self.set_state(0, 0)
+        self.move_goal_sphere(0, 20)
         # Initalizing the RL action and observation space - normalized??
         self.action_space = spaces.Box(low=np.array([-1, -1], dtype=np.float32), high=np.array([1, 1], dtype=np.float32)) # thrust and pitch normalized to [-1, 1]
         self.observation_space = spaces.Box(low=np.array([-1, -1, -1, -1, -1, -1, -1], dtype=np.float32), high=np.array([1, 1, 1, 1, 1, 1, 1], dtype=np.float32)) # e_x, e_z, v_x, v_z, e_theta, e_theta_dot, pitch angle of drone
@@ -95,23 +96,34 @@ class PayloadEnv(gym.Env):
 
     def step(self, action):
         ''' Take step in environment. '''
+        #if self.infinite_goal:
+        #    self.move_desired_position()
         self.set_action(action) 
         state = self.calculate_state()
         self.state = state
-        normed_pos_error = np.linalg.norm(state[:2])
+        normed_pos_error = np.linalg.norm([state[0]*self.x_normalize, state[1]])
         normed_velocity = np.linalg.norm(state[2:4])
+        if normed_pos_error < 0.3: # Increased penalty for quadrotor pitch angle when close to desired position
+            self.k_gamma = 0.5
+        else:
+            self.k_gamma = 0.01
         reward = self.calculate_reward(state)
         print(f'{state = }')
         print(f'{reward = }')
         time_used = rospy.get_time() - self.start_time
-        # when should the episode finish and reset
-        if normed_pos_error < 0.1 and normed_velocity < 0.25: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
+        # when should the episode finish and reset'
+        print(f'{normed_pos_error = }')
+        print(f'{normed_velocity = }')
+        if normed_pos_error < 0.05 and normed_velocity < 0.25: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
+            print(f'Flag 1')
             done = True
             reward += 150 - 2*time_used/self.norm_normalize # more reward for higher velocity
         elif time_used > 25: # changed time stop from 50 -> 20 so reward is not just accumalated
+            print(f'Flag 2')
             done = True
             reward -= 100 
         elif self.v_z < -6 or self.current_drone_state[1] < 2 or abs(self.drone_yaw) > 0.2  or normed_pos_error > 30:
+            print(f'Flag 3')
             done = True
             reward -= 150 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
@@ -124,6 +136,7 @@ class PayloadEnv(gym.Env):
         ''' Reset environment - resets the rope and makes the drone have zero velocity and a new goal at a given distance from its current position'''
         self.thrust = 0.7 # set thrust higher to stabilize?
         self.pitch = 0
+        self.roll = 0
         for i in range(3): # send multiple times to ensure it resets all
             self.set_state(0, 20)
             self.reset_joints(model_name = "iris_load_test", \
@@ -131,11 +144,16 @@ class PayloadEnv(gym.Env):
                     joint_positions = self.joint_positions)
 
         self.current_drone_state = [0, 20]
-        # generate random side of both x and z where the desired position is placed 
-        x_des = np.random.uniform(-10, 10) # avoiding overfitting
-        z_des = 20 + np.random.uniform(-0.5, 0.5) # +20 bias for same height as drone starts in
+        if not self.infinite_goal:
+            # generate random side of both x and z where the desired position is placed 
+            x_des = np.random.uniform(-10, 10) # avoiding overfitting
+            z_des = 20 + np.random.uniform(-0.5, 0.5) # +20 bias for same height as drone starts in 
+        else:
+            x_des = 10
+            z_des = 20
+        self.move_goal_sphere(x_des, z_des)
         self.x_normalize = abs(x_des)
-        self.z_normalize = abs(z_des)
+        self.z_normalize = abs(z_des-20) # remove bias of 20
         self.norm_normalize = np.sqrt(self.x_normalize**2+self.z_normalize**2)
         self.desired_position = [x_des, z_des]
         state = self.calculate_state()
@@ -155,7 +173,7 @@ class PayloadEnv(gym.Env):
         theta_payload = -np.arctan2(np.sin(theta_payload),np.cos(theta_payload))
         e_theta = self.drone_pitch - theta_payload
         e_x /= self.x_normalize # normalize to maximum desired distance
-        e_z /= self.z_normalize
+        # omitted e_z /= self.z_normalize
         e_theta /= np.pi # normalize angle
         if e_theta == self.pre_e_theta:
             self.step_counter += 1
@@ -164,7 +182,7 @@ class PayloadEnv(gym.Env):
             self.pre_e_theta = e_theta
             self.step_counter = 1
         v_x_normalized = self.v_x/self.v_x_normalize
-        v_z_normalized = self.v_z/self.v_z_normalize
+        v_z_normalized = self.v_z# omitted /self.v_z_normalize
         return np.array([e_x, e_z, v_x_normalized, v_z_normalized, e_theta, self.e_theta_dot, self.drone_pitch_normalized], dtype=np.float32)
 
     def calculate_reward(self, state):
@@ -173,12 +191,31 @@ class PayloadEnv(gym.Env):
         return reward
 
     def set_state(self, x, z):
-        """ Resets the state of the drone to same position with zero joint angles and zeros velocities"""
+        """ Resets the state of the drone to same position with zero joint angles and zeros velocities. """
         state_msg = ModelState()
         state_msg.model_name = 'iris_load_test'
         state_msg.pose.position.x = x
         state_msg.pose.position.y = 0
         state_msg.pose.position.z = z
+        state_msg.pose.orientation.x = 0
+        state_msg.pose.orientation.y = 0
+        state_msg.pose.orientation.z = 0
+        state_msg.pose.orientation.w = 1
+        state_msg.twist.linear.x = 0
+        state_msg.twist.linear.y = 0
+        state_msg.twist.linear.z = 0
+        state_msg.twist.angular.x = 0
+        state_msg.twist.angular.y = 0
+        state_msg.twist.angular.z = 0
+        self.reset_model_state(state_msg)
+
+    def move_goal_sphere(self, x_des, z_des):
+        """ Sets the state of the goal sphere to the desired position. """
+        state_msg = ModelState()
+        state_msg.model_name = 'goal_sphere'
+        state_msg.pose.position.x = x_des
+        state_msg.pose.position.y = 0
+        state_msg.pose.position.z = z_des
         state_msg.pose.orientation.x = 0
         state_msg.pose.orientation.y = 0
         state_msg.pose.orientation.z = 0
@@ -199,7 +236,7 @@ class PayloadEnv(gym.Env):
             angle_compensation = abs(np.cos(self.pitch))
             if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
                 angle_compensation = 0.5  
-            self.thrust = 0.7 + (1.5*self.state[1]*self.z_normalize - 0.5*self.state[3])/angle_compensation # coefficients from pd_controller node - use unnormalized errors
+            self.thrust = 0.7 + (1.5*self.state[1] - 0.5*self.state[3])/angle_compensation # coefficients from pd_controller node - use unnormalized errors
             self.pitch = 0.5*self.state[0]*self.x_normalize - 0.4*self.state[2]
             self.pitch = np.clip(self.pitch, -0.52, 0.52) # clip angles to range -pi/6, pi/6 (angles are not normalized)
         self.orientation = Quaternion(*quaternion_from_euler(0, self.pitch, 0))
@@ -208,20 +245,26 @@ class PayloadEnv(gym.Env):
         msg = AttitudeTarget()
         msg.thrust = self.thrust
         msg.type_mask = 7
-        q = Quaternion(*quaternion_from_euler(0, self.pitch, 0))
+        q = Quaternion(*quaternion_from_euler(self.roll, self.pitch, 0))
         msg.orientation = q
         msg.body_rate.z = 0
         self.attitude_pub.publish(msg)
 
+    def move_desired_position(self):
+        x_des = 10 + self.current_drone_state[0]
+        z_des = 20
+        self.move_goal_sphere(x_des, z_des)
+
     def gazebo_state_callback(self, data):
         """ Update the current state of the drone """
-        self.current_drone_state[0] = data.pose[1].position.x # index 1 is drone in gazebo
-        self.current_drone_state[1] = data.pose[1].position.z
+        self.current_drone_state[0] = data.pose[2].position.x # index 2 is drone in gazebo
+        self.current_drone_state[1] = data.pose[2].position.z
+        self.roll = 0.1*data.pose[1].position.y
         self.current_payload_state[0] = data.pose[-1].position.x # index -1 (last) is payload in gazebo
         self.current_payload_state[1] = data.pose[-1].position.z
-        self.v_x = data.twist[1].linear.x
-        self.v_z = data.twist[1].linear.z
-        q = data.pose[1].orientation
+        self.v_x = data.twist[2].linear.x
+        self.v_z = data.twist[2].linear.z
+        q = data.pose[2].orientation
         orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
         self.drone_pitch = orientation[1]
         self.drone_yaw = orientation[2]
