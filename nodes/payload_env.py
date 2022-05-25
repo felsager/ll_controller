@@ -65,10 +65,10 @@ class PayloadEnv(gym.Env):
         self.e_y = 0
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
-        self.k_alpha = 0.7 # position error reward coefficient
+        self.k_alpha = 0.8 # position error reward coefficient
         self.k_beta = 0.07 # velocity reward coefficient - velocity is not normalized and should have a lower coefficient?
-        self.k_theta = 0.35 # theta error reward coefficient
-        self.k_delta = 0.1 # theta error dot reward coefficient
+        self.k_theta = 0.2 # theta error reward coefficient
+        self.k_delta = 0.05 # theta error dot reward coefficient
         self.k_gamma = 0.01 # pitch angle reward coefficient
 
         self.pre_e_theta = 0
@@ -103,8 +103,8 @@ class PayloadEnv(gym.Env):
         self.state = state
         normed_pos_error = np.linalg.norm([state[0]*self.x_normalize, state[1]])
         normed_velocity = np.linalg.norm(state[2:4])
-        if normed_pos_error < 0.3: # Increased penalty for quadrotor pitch angle when close to desired position
-            self.k_gamma = 0.5
+        if normed_pos_error < 0.15: # Increased penalty for quadrotor pitch angle when close to desired position
+            self.k_gamma = 0.2
         else:
             self.k_gamma = 0.01
         reward = self.calculate_reward(state)
@@ -117,15 +117,16 @@ class PayloadEnv(gym.Env):
         if normed_pos_error < 0.05 and normed_velocity < 0.25: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             print(f'Flag 1')
             done = True
-            reward += 150 - 2*time_used/self.norm_normalize # more reward for higher velocity
-        elif time_used > 25: # changed time stop from 50 -> 20 so reward is not just accumalated
+            reward += 120 #- time_used/self.norm_normalize # more reward for higher velocity
+        elif time_used > 60: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
-            reward -= 100 
-        elif self.v_z < -6 or self.current_drone_state[1] < 2 or abs(self.drone_yaw) > 0.2  or normed_pos_error > 30:
+            reward -= 60 
+        elif self.v_z < -6 or self.current_drone_state[1] < 2 or abs(self.drone_yaw) > 0.15:
             print(f'Flag 3')
+            print(self.drone_yaw)
             done = True
-            reward -= 150 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
+            reward -= 30 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -147,7 +148,7 @@ class PayloadEnv(gym.Env):
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
             x_des = np.random.uniform(-10, 10) # avoiding overfitting
-            z_des = 20 + np.random.uniform(-0.5, 0.5) # +20 bias for same height as drone starts in 
+            z_des = 20 + np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
         else:
             x_des = 10
             z_des = 20
@@ -245,7 +246,7 @@ class PayloadEnv(gym.Env):
         msg = AttitudeTarget()
         msg.thrust = self.thrust
         msg.type_mask = 7
-        q = Quaternion(*quaternion_from_euler(self.roll, self.pitch, 0))
+        q = Quaternion(*quaternion_from_euler(0., self.pitch, 0.))
         msg.orientation = q
         msg.body_rate.z = 0
         self.attitude_pub.publish(msg)
@@ -257,14 +258,16 @@ class PayloadEnv(gym.Env):
 
     def gazebo_state_callback(self, data):
         """ Update the current state of the drone """
-        self.current_drone_state[0] = data.pose[2].position.x # index 2 is drone in gazebo
-        self.current_drone_state[1] = data.pose[2].position.z
-        self.roll = 0.1*data.pose[1].position.y
-        self.current_payload_state[0] = data.pose[-1].position.x # index -1 (last) is payload in gazebo
-        self.current_payload_state[1] = data.pose[-1].position.z
-        self.v_x = data.twist[2].linear.x
-        self.v_z = data.twist[2].linear.z
-        q = data.pose[2].orientation
+        idx_q = 1
+        idx_p = -2
+        self.current_drone_state[0] = data.pose[idx_q].position.x 
+        self.current_drone_state[1] = data.pose[idx_q].position.z
+        self.roll = 0.1*data.pose[idx_q].position.y
+        self.current_payload_state[0] = data.pose[idx_p].position.x # index -1 (last) is payload in gazebo
+        self.current_payload_state[1] = data.pose[idx_p].position.z
+        self.v_x = data.twist[idx_q].linear.x
+        self.v_z = data.twist[idx_q].linear.z
+        q = data.pose[idx_q].orientation
         orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
         self.drone_pitch = orientation[1]
         self.drone_yaw = orientation[2]
