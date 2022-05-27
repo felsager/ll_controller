@@ -35,7 +35,7 @@ class PayloadEnv(gym.Env):
 
         self.norm_normalize = 1
 
-        self.state = np.zeros(8, dtype=np.float32) # saving state for PD controller
+        self.state = np.zeros(10, dtype=np.float32) # saving state for PD controller
 
         # Initial control action
         self.thrust = 0.7
@@ -71,11 +71,12 @@ class PayloadEnv(gym.Env):
         self.desired_position = np.zeros(3)
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
-        self.k_alpha = 0.5 # position error reward coefficient
+        self.k_alpha = 0.3 # position error reward coefficient for xy
+        self.k_alpha_z = 0.8
         self.k_beta = 0.05 # velocity reward coefficient - velocity is not normalized and should have a lower coefficient?
         self.k_angle = 0.175 # swing angle error reward coefficient
+        self.k_gamma = 0.05 # pitch and roll angle reward coefficient
         #self.k_delta = 0.05 # theta error dot reward coefficient
-        #self.k_gamma = 0.01 # pitch angle reward coefficient
 
         self.pre_e_theta = 0
         self.e_theta_dot = 0
@@ -95,7 +96,7 @@ class PayloadEnv(gym.Env):
         self.move_goal_sphere(0, 0, 20)
         # Initalizing the RL action and observation space - normalized??
         self.action_space = spaces.Box(low=np.array([-1, -1, -1], dtype=np.float32), high=np.array([1, 1, 1], dtype=np.float32)) # thrust, pitch and roll normalized to [-1, 1]
-        self.observation_space = spaces.Box(low=np.array([-1, -1, -1, -1, -1, -1, -1, -1], dtype=np.float32), high=np.array([1, 1, 1, 1, 1, 1, 1, 1], dtype=np.float32)) # e_x, e_y, e_z, v_x, v_y, v_z, e_theta, e_psi
+        self.observation_space = spaces.Box(low=np.array([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], dtype=np.float32), high=np.array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.float32)) # e_x, e_y, e_z, v_x, v_y, v_z, e_theta_p, e_theta_r, theta_p, theta_r
         print('Initializing drone: ')
         self.control_timer = rospy.Timer(rospy.Duration(0.001), self.control_callback)
         self.initialize_drone()
@@ -116,17 +117,17 @@ class PayloadEnv(gym.Env):
         # when should the episode finish and reset'
         print(f'{normed_pos_error = }')
         print(f'{normed_velocity = }')
-        if normed_pos_error < 0.1 and normed_velocity < 0.2: # changed the normed velocity requirment from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
+        if normed_pos_error < 0.1 and normed_velocity < 0.2: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             print(f'Flag 1')
             done = True
-            reward += 60 #- time_used/self.norm_normalize # more reward for higher velocity
+            reward += 30 #- time_used/self.norm_normalize # more reward for higher velocity
         elif time_used > 60: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
             reward -= 30 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
             done = True
-            reward -= 30 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
+            reward -= 10 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -148,16 +149,20 @@ class PayloadEnv(gym.Env):
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
             x_des = np.random.uniform(-10, 10) # avoiding overfitting
-            y_des = np.random.uniform(-10, 10)
-            z_des = 20 + np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
+            #y_des = np.random.uniform(-10, 10)
+            #z_des = 20 + np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
+            y_des = 0
+            z_des = 20
         else:
             x_des = 10
             y_des = 0
             z_des = 20
         self.move_goal_sphere(x_des, y_des, z_des)
         self.x_normalize = abs(x_des)
-        self.y_normalize = abs(y_des)
-        self.z_normalize = abs(z_des-20) # remove bias of 20
+        #self.y_normalize = abs(y_des)
+        #self.z_normalize = abs(z_des-20) # remove bias of 20
+        self.y_normalize = 1
+        self.z_normalize = 1
         self.norm_normalize = np.sqrt(self.x_normalize**2+self.y_normalize**2+self.z_normalize**2)
         self.desired_position = [x_des, y_des, z_des]
         state = self.calculate_state()
@@ -195,11 +200,11 @@ class PayloadEnv(gym.Env):
         v_x_normalized = self.v_x/self.v_x_normalize
         v_y_normalized = self.v_y/self.v_y_normalize
         v_z_normalized = self.v_z/self.v_z_normalize
-        return np.array([e_x, e_y, e_z, v_x_normalized, v_y_normalized, v_z_normalized, e_theta, e_psi], dtype=np.float32)
+        return np.array([e_x, e_y, e_z, v_x_normalized, v_y_normalized, v_z_normalized, e_theta, e_psi, self.drone_pitch_normalized, self.drone_roll_normalized], dtype=np.float32)
 
     def calculate_reward(self, state):
         """ Calculate the reward. """
-        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1]) + abs(state[2])) - self.k_beta*(abs(state[3]) + abs(state[4]) + abs(state[5])) - self.k_angle*(abs(state[6]) + abs(state[7])) # - self.k_delta*abs(state[5]) - self.k_gamma*abs(state[6])
+        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1])) - self.k_alpha_z*abs(state[2]) - self.k_beta*(abs(state[3]) + abs(state[4]) + abs(state[5])) - self.k_angle*(abs(state[6]) + abs(state[7])) - self.k_gamma*(abs(state[8])+abs(state[9])) 
         return reward
 
     def set_state(self, x, y, z):
@@ -243,8 +248,9 @@ class PayloadEnv(gym.Env):
     def set_action(self, action):
         if not self.pd_control:
             self.thrust = 0.7 + 0.3*action[0] # maps thrust from [-1, 1] to [0.4, 1] where 0 maps to 0.7 which is hover equilbrium
-            self.pitch = 0.52*action[1] # scales pitch to interval [-pi/6,pi/6]
-            self.roll = 0.52*action[2] # scales pitch to interval [-pi/6,pi/6]
+            self.pitch = 0.35*action[1] # scales pitch to interval [-pi/6,pi/6]
+            self.roll = 0.35*action[2] # scales pitch to interval [-pi/6,pi/6]
+            print(f'{[self.thrust, self.pitch, self.roll] = }')
         else:
             angle_compensation = abs(np.cos(self.drone_pitch)*np.cos(self.drone_roll))
             if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
