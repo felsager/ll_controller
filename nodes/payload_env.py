@@ -71,10 +71,10 @@ class PayloadEnv(gym.Env):
         self.desired_position = np.zeros(3)
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
-        self.k_alpha = 0.3 # position error reward coefficient for xy
-        self.k_alpha_z = 0.8
+        self.k_alpha = 0.5 # position error reward coefficient
+        self.k_alpha_z = 0.45
         self.k_beta = 0.05 # velocity reward coefficient - velocity is not normalized and should have a lower coefficient?
-        self.k_angle = 0.175 # swing angle error reward coefficient
+        self.k_angle = 0.15 # swing angle error reward coefficient
         self.k_gamma = 0.05 # pitch and roll angle reward coefficient
         #self.k_delta = 0.05 # theta error dot reward coefficient
 
@@ -120,14 +120,17 @@ class PayloadEnv(gym.Env):
         if normed_pos_error < 0.1 and normed_velocity < 0.2: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             print(f'Flag 1')
             done = True
-            reward += 30 #- time_used/self.norm_normalize # more reward for higher velocity
+            vel_punish = 15*time_used/self.norm_normalize
+            if vel_punish > 60:
+                vel_punish = 60
+            reward += 120 -vel_punish # more reward for higher velocity
         elif time_used > 60: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
-            reward -= 30 
+            reward -= 60 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
             done = True
-            reward -= 10 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
+            reward -= 40 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -204,7 +207,7 @@ class PayloadEnv(gym.Env):
 
     def calculate_reward(self, state):
         """ Calculate the reward. """
-        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1])) - self.k_alpha_z*abs(state[2]) - self.k_beta*(abs(state[3]) + abs(state[4]) + abs(state[5])) - self.k_angle*(abs(state[6]) + abs(state[7])) - self.k_gamma*(abs(state[8])+abs(state[9])) 
+        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1]) + abs(state[2])) - self.k_beta*(abs(state[3]) + abs(state[4]) + abs(state[5])) - self.k_angle*(abs(state[6]) + abs(state[7])) - self.k_gamma*(abs(state[8])+abs(state[9])) 
         return reward
 
     def set_state(self, x, y, z):
