@@ -121,16 +121,16 @@ class PayloadEnv(gym.Env):
             print(f'Flag 1')
             done = True
             vel_punish = 15*time_used/self.norm_normalize
-            if vel_punish > 60:
-                vel_punish = 60
-            reward += 120 -vel_punish # more reward for higher velocity
+            if vel_punish > 100:
+                vel_punish = 100
+            reward += 200 - vel_punish # more reward for higher velocity
         elif time_used > 60: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
-            reward -= 60 
+            reward -= 80 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
             done = True
-            reward -= 40 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
+            reward -= 70 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -151,20 +151,20 @@ class PayloadEnv(gym.Env):
         self.current_drone_state = [0, 0, 20]
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
-            x_des = np.random.uniform(-10, 10) # avoiding overfitting
-            #y_des = np.random.uniform(-10, 10)
+            #x_des = np.random.uniform(-10, 10) # avoiding overfitting
+            x_des = 0
+            y_des = np.random.uniform(-10, 10)
             #z_des = 20 + np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
-            y_des = 0
             z_des = 20
         else:
             x_des = 10
             y_des = 0
             z_des = 20
         self.move_goal_sphere(x_des, y_des, z_des)
-        self.x_normalize = abs(x_des)
-        #self.y_normalize = abs(y_des)
+        #self.x_normalize = abs(x_des)
+        self.x_normalize = 1
+        self.y_normalize = abs(y_des)
         #self.z_normalize = abs(z_des-20) # remove bias of 20
-        self.y_normalize = 1
         self.z_normalize = 1
         self.norm_normalize = np.sqrt(self.x_normalize**2+self.y_normalize**2+self.z_normalize**2)
         self.desired_position = [x_des, y_des, z_des]
