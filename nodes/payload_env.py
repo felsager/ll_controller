@@ -71,12 +71,11 @@ class PayloadEnv(gym.Env):
         self.desired_position = np.zeros(3)
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
-        self.k_alpha = 0.5 # position error reward coefficient
-        self.k_alpha_z = 0.45
+        self.k_alpha = 0.6 # position xy error reward coefficient
+        self.k_alpha_z = 0.3
         self.k_beta = 0.05 # velocity reward coefficient - velocity is not normalized and should have a lower coefficient?
-        self.k_angle = 0.15 # swing angle error reward coefficient
-        self.k_gamma = 0.05 # pitch and roll angle reward coefficient
-        #self.k_delta = 0.05 # theta error dot reward coefficient
+        self.k_angle = 0.1 # swing angle error reward coefficient
+        self.k_gamma = 0.075 # pitch and roll angle reward coefficient
 
         self.pre_e_theta = 0
         self.e_theta_dot = 0
@@ -127,10 +126,10 @@ class PayloadEnv(gym.Env):
         elif time_used > 60: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
-            reward -= 80 
+            reward -= 50 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
             done = True
-            reward -= 70 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
+            reward -= 30 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -151,18 +150,19 @@ class PayloadEnv(gym.Env):
         self.current_drone_state = [0, 0, 20]
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
-            #x_des = np.random.uniform(-10, 10) # avoiding overfitting
-            x_des = 0
-            y_des = np.random.uniform(-10, 10)
-            #z_des = 20 + np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
-            z_des = 20
+            x_des = np.random.uniform(-3, 3) # avoiding overfitting
+            #side = np.random.randint(2)
+            #x_des = 10*(-1)**side
+            #x_des = 0 #np.random.uniform(-1, 1)
+            y_des = np.random.uniform(-3, 3)
+            z_des = 20 #+ np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
+
         else:
             x_des = 10
             y_des = 0
             z_des = 20
         self.move_goal_sphere(x_des, y_des, z_des)
-        #self.x_normalize = abs(x_des)
-        self.x_normalize = 1
+        self.x_normalize = abs(x_des)
         self.y_normalize = abs(y_des)
         #self.z_normalize = abs(z_des-20) # remove bias of 20
         self.z_normalize = 1
@@ -207,7 +207,7 @@ class PayloadEnv(gym.Env):
 
     def calculate_reward(self, state):
         """ Calculate the reward. """
-        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1]) + abs(state[2])) - self.k_beta*(abs(state[3]) + abs(state[4]) + abs(state[5])) - self.k_angle*(abs(state[6]) + abs(state[7])) - self.k_gamma*(abs(state[8])+abs(state[9])) 
+        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1])) - self.k_alpha_z*abs(state[2]) - self.k_beta*(abs(state[3]) + abs(state[4]) + abs(state[5])) - self.k_angle*(abs(state[6]) + abs(state[7])) - self.k_gamma*(abs(state[8])+abs(state[9])) 
         return reward
 
     def set_state(self, x, y, z):
@@ -249,26 +249,30 @@ class PayloadEnv(gym.Env):
         self.reset_model_state(state_msg)
     
     def set_action(self, action):
+        angle_compensation = abs(np.cos(self.drone_pitch)*np.cos(self.drone_roll))
+        print(f'{angle_compensation = }')
+        print(f'{action[0] = }')
+        if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
+            angle_compensation = 0.5 
         if not self.pd_control:
-            self.thrust = 0.7 + 0.3*action[0] # maps thrust from [-1, 1] to [0.4, 1] where 0 maps to 0.7 which is hover equilbrium
+            self.thrust = (0.7 + 0.3*action[0])/angle_compensation # maps thrust from [-1, 1] to [0.4, 1] where 0 maps to 0.7 which is hover equilbrium
             self.pitch = 0.35*action[1] # scales pitch to interval [-pi/6,pi/6]
             self.roll = 0.35*action[2] # scales pitch to interval [-pi/6,pi/6]
             print(f'{[self.thrust, self.pitch, self.roll] = }')
         else:
-            angle_compensation = abs(np.cos(self.drone_pitch)*np.cos(self.drone_roll))
-            if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
-                angle_compensation = 0.5  
             self.thrust = (0.7 + (1.5*self.state[2] - 0.5*self.v_z))/angle_compensation # coefficients from pd_controller node - use unnormalized errors
             self.pitch = 0.5*self.state[0]*self.x_normalize - 0.4*self.v_x
             self.roll = -(0.5*self.state[1]*self.y_normalize - 0.4*self.v_y)
             self.pitch = np.clip(self.pitch, -0.3, 0.3) # clip angles to avoid flipping over
             self.roll = np.clip(self.roll, -0.3, 0.3)
+
         self.orientation = Quaternion(*quaternion_from_euler(self.roll, self.pitch, 0))
     
     def control_callback(self, event):
         msg = AttitudeTarget()
         msg.thrust = self.thrust
-        msg.type_mask = 7
+        msg.type_mask = 3
+        msg.body_rate.z = 0
         msg.orientation = self.orientation
         self.attitude_pub.publish(msg)
 
@@ -306,8 +310,9 @@ class PayloadEnv(gym.Env):
         self.unpause_physics()
         for i in range(300):
             msg = AttitudeTarget()
-            msg.type_mask = 7
+            msg.type_mask = 4
             msg.thrust = self.thrust
+            msg.body_rate.z = 0
             msg.orientation = Quaternion(*quaternion_from_euler(0, self.pitch, 0))
             self.attitude_pub.publish(msg)
             init_rate.sleep()

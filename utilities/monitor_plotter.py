@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
-log_dir = "/home/felsager/Documents/gym/22/"
+log_dir = "/home/felsager/Documents/gym/29/"
 
 def moving_average(values, window):
     """
@@ -23,7 +23,7 @@ def plot_results(log_folder, title='Learning Curve'):
     :param title: (str) the title of the task to plot
     """
     x, y = ts2xy(load_results(log_folder), 'timesteps')
-    y = moving_average(y, window=20) # longer training -> use bigger window to avoid high frequency noise
+    y = moving_average(y, window=1) # longer training -> use bigger window to avoid high frequency noise
     # Truncate x
     x = x[len(x) - len(y):]
 
