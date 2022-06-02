@@ -8,7 +8,7 @@ from pd_controller import *
 wp_no = 2
 waypoints = np.zeros((wp_no, 3))
 waypoints[0,:] = np.array([0, 0, 1])
-waypoints[1,:] = np.array([0, 0, 10])
+waypoints[1,:] = np.array([10, 0, 1])
 
 if __name__ == '__main__':
     try:

@@ -46,8 +46,6 @@ class PDController:
         self.control_timer = rospy.Timer(rospy.Duration(self.control_period), self.control_callback)
 
         # Mavros pose and twist subscribers
-        #self.pose_sub = rospy.Subscriber('/mavros/local_position/pose', PoseStamped, self.pose_callback, queue_size=10) 
-        self.velocity_sub = rospy.Subscriber('/mavros/local_position/velocity_body', TwistStamped, self.velocity_callback, queue_size=10)
         
         # Gazebo ground truth subscriber of drone and payload state
         self.state_subscriber = rospy.Subscriber('/gazebo/link_states', LinkStates, self.state_callback)
@@ -70,8 +68,8 @@ class PDController:
         self.kp_thrust = 1.5
         self.kd_thrust = -0.5
 
-        self.kp_att = 0.5
-        self.kd_att = -0.4
+        self.kp_att = 0.6
+        self.kd_att = -0.3
 
         # Waypoint initialization
         self.waypoints = np.array(waypoints)
@@ -95,12 +93,6 @@ class PDController:
         self.orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
     '''
 
-    def velocity_callback(self, data):
-        """ Callback for drone velocity subscriber"""
-        self.velocity[0] = data.twist.linear.x
-        self.velocity[1] = data.twist.linear.y
-        self.velocity[2] = data.twist.linear.z
-
     def update_waypoint(self):
         """ Increment waypoint index and set current waypoint"""
         self.waypoint_ind += 1
@@ -115,12 +107,12 @@ class PDController:
         self.time.append(self.time[-1] + self.control_period)
         self.setpoints.append(self.waypoints[self.waypoint_ind])
         error, dist_error = self.get_position_error()
-        if dist_error < self.error_threshold:
+        if dist_error < self.error_threshold and abs(self.velocity[0]) < 0.1:
             if self.waypoint_ind == self.waypoint_no - 1:
-                self.time = np.array(self.time)[:-251]
-                self.drone_states = np.array(self.drone_states)[250:]
-                self.payload_states = np.array(self.payload_states)[250:]
-                self.setpoints = np.array(self.setpoints)[250:]
+                self.time = np.array(self.time)[:-1]
+                self.drone_states = np.array(self.drone_states)[:]
+                self.payload_states = np.array(self.payload_states)[:]
+                self.setpoints = np.array(self.setpoints)[:]
             self.update_waypoint()
             error, dist_error = self.get_position_error()
             print('Going to ', self.current_waypoint)
@@ -129,6 +121,7 @@ class PDController:
             self.velocity[2], self.orientation[0], self.orientation[0])
         orientation = self.attitude_controller(error[0], error[1], \
              self.velocity[0], self.velocity[1])
+        print(f'{thrust = }')
         msg = AttitudeTarget()
         msg.type_mask = 3
         msg.thrust = thrust
@@ -142,40 +135,45 @@ class PDController:
         payload_error = np.subtract(self.current_drone_state, self.current_payload_state)
         payload_angle = np.arctan2(payload_error[2], payload_error[0]) - np.pi/2
         payload_angle = -np.arctan2(np.sin(payload_angle),np.cos(payload_angle))
-        print(f'Orientation: {self.orientation}')
-        print(f'Payload angle: {payload_angle}')
-        print(f'Orientation error: {self.orientation[1] - payload_angle}')
+        #print(f'Orientation: {self.orientation}')
+        #print(f'Payload angle: {payload_angle}')
+        #print(f'Orientation error: {self.orientation[1] - payload_angle}')
         dist_err = np.linalg.norm(error[::2])
         return error, dist_err
 
     def thrust_controller(self, e_z, v_z, pitch, roll):
         """ PD position control of drone thrust. """
+        print(f'{[e_z, v_z] = }')
         angle_compensation = abs(np.cos(pitch)*np.cos(roll))
         if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
             angle_compensation = 0.5  
-        thrust = 0.7 + self.kp_thrust*e_z + self.kd_thrust*v_z
+        thrust = 0.83 + self.kp_thrust*e_z + self.kd_thrust*v_z
         thrust /= angle_compensation
         return thrust
 
     def attitude_controller(self, e_x, e_y, v_x, v_y):
         """ PD position control of drone pitch and roll. """
+        print(f'{[e_x, e_y, v_x, v_y] = }')
         pitch = (self.kp_att*e_x + self.kd_att*v_x)
         roll = -(self.kp_att*e_y + self.kd_att*v_y)
-        pitch = np.clip(pitch, -0.52, 0.52) # clip angles to range -pi/6, pi/6 (angles are not normalized)
-        roll = np.clip(roll, -0.52, 0.52)
-        roll = 0
+        pitch = np.clip(pitch, -0.31, 0.31) # clip angles to range -pi/6, pi/6 (angles are not normalized)
+        roll = np.clip(roll, -0.31, 0.31)
+        print(f'{[pitch, roll] = }')
         return Quaternion(*quaternion_from_euler(roll, pitch, 0))
     
     def state_callback(self, data):
         """ Update the current state of the drone """
-        self.current_drone_state[0] = data.pose[1].position.x # index 1 is drone in gazebo
-        self.current_drone_state[1] = data.pose[1].position.y
-        self.current_drone_state[2] = data.pose[1].position.z
+        self.current_drone_state[0] = data.pose[2].position.x # index 1 is drone in gazebo
+        self.current_drone_state[1] = data.pose[2].position.y
+        self.current_drone_state[2] = data.pose[2].position.z
         self.current_payload_state[0] = data.pose[-1].position.x # index -1 (last) is payload in gazebo
         self.current_payload_state[1] = data.pose[-1].position.y
         self.current_payload_state[2] = data.pose[-1].position.z
+        self.velocity[0] = data.twist[2].linear.x
+        self.velocity[1] = data.twist[2].linear.y
+        self.velocity[2] = data.twist[2].linear.z
         self.position = self.current_drone_state
-        q = data.pose[1].orientation
+        q = data.pose[2].orientation
         self.orientation = np.array(euler_from_quaternion([q.x, q.y, q.z, q.w]))
 
     def initialize_drone(self):

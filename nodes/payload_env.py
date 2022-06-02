@@ -73,8 +73,9 @@ class PayloadEnv(gym.Env):
         self.desired_position = np.zeros(2)
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
-        self.k_alpha = 0.8 # position xz error reward coefficient
-        self.k_beta = 0.05 # velocity xz reward coefficient - velocity is not normalized and should have a lower coefficient?
+        self.k_alpha = 0.75 # position x error reward coefficient
+        self.k_alpha_z = 0.75
+        self.k_beta = 0.1 # velocity xz reward coefficient - velocity is not normalized and should have a lower coefficient?
         self.k_angle = 0.2 # swing angle error reward coefficient
         self.k_delta = 0.05 # swing error dot
         self.k_gamma = 0.05 # pitch angle reward coefficient
@@ -118,20 +119,20 @@ class PayloadEnv(gym.Env):
         # when should the episode finish and reset'
         print(f'{normed_pos_error = }')
         print(f'{normed_velocity = }')
-        if normed_pos_error < 0.1 and normed_velocity < 0.2 and time_used > 0.1: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
+        if normed_pos_error < 0.1 and normed_velocity < 0.1 and time_used > 0.2: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             print(f'Flag 1')
             done = True
-            vel_punish = 15*time_used/self.norm_normalize
-            if vel_punish > 100:
-                vel_punish = 100
+            vel_punish = 250*time_used/self.norm_normalize
+            if vel_punish > 150:
+                vel_punish = 150
             reward += 200 - vel_punish # more reward for higher velocity
-        elif time_used > 60: # changed time stop from 50 -> 20 so reward is not just accumalated
+        elif time_used > 40: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
-            reward -= 50 
+            reward -= 100 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
             done = True
-            reward -= 30 # stronger punishment for just falling to the ground or yaw drift - inaccurate rope model
+            reward -= 30
         else:
             done = False
         info = {} #[f'{self.desired_position, self.current_drone_state = }'] # placeholder
@@ -155,15 +156,18 @@ class PayloadEnv(gym.Env):
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
             x_des = np.random.uniform(-10, 10) # avoiding overfitting
-            z_des = 20 + np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
+            #x_des = 0
+            z_des = 20 #+ np.random.uniform(-2, 2) # +20 bias for same height as drone starts in 
 
         else:
             x_des = 10
             z_des = 20
         self.move_goal_sphere(x_des, y_des, z_des)
-        self.x_normalize = abs(x_des)
-        self.z_normalize = abs(z_des-20) # remove bias of 20
-        self.norm_normalize = np.sqrt(self.x_normalize**2+self.z_normalize**2)
+        #self.x_normalize = abs(x_des)
+        self.x_normalize = 10
+        #self.z_normalize = abs(z_des-20) # remove bias of 20
+        self.z_normalize = 1
+        self.norm_normalize = abs(x_des)
         self.desired_position = [x_des, z_des]
         state = self.calculate_state()
         self.pre_e_theta = 0
@@ -198,7 +202,7 @@ class PayloadEnv(gym.Env):
 
     def calculate_reward(self, state):
         """ Calculate the reward. """
-        reward = 1 - self.k_alpha*(abs(state[0]) + abs(state[1])) - self.k_beta*(abs(state[2]) + abs(state[3])) - self.k_angle*abs(state[4]) - self.k_delta*abs(state[5])- self.k_gamma*abs(state[6])
+        reward = 1 - self.k_alpha*abs(state[0]) - self.k_alpha_z*abs(state[1]) - self.k_beta*(abs(state[2]) + abs(state[3])) - self.k_angle*abs(state[4]) - self.k_delta*abs(state[5])- self.k_gamma*abs(state[6])
         return reward
 
     def set_state(self, x, y, z):
@@ -246,17 +250,16 @@ class PayloadEnv(gym.Env):
         if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
             angle_compensation = 0.5 
         if not self.pd_control:
-            self.thrust = (0.7 + 0.3*action[0]) # maps thrust from [-1, 1] to [0.4, 1] where 0 maps to 0.7 which is hover equilbrium
-            self.pitch = 0.52*action[1]
-            self.roll = 0.3*self.current_drone_state[1]
+            self.thrust = 0.83 + 0.17*action[0] # maps thrust from [-1, 1] to [0.4, 1] where 0 maps to 0.7 which is hover equilbrium
+            self.pitch = 0.31*action[1] # range from -pi/6 to pi/6
+            self.roll = 0.6*self.current_drone_state[1] + 0.3*self.v_y
             print(f'{[self.thrust, self.pitch] = }')
         else:
-            self.thrust = (0.7 + (1.5*self.state[2] - 0.5*self.v_z))/angle_compensation # coefficients from pd_controller node - use unnormalized errors
-            self.pitch = 0.5*self.state[0]*self.x_normalize - 0.4*self.v_x
-            self.roll = 0.5*self.current_drone_state[1] + 0.4*self.v_y
-            self.pitch = np.clip(self.pitch, -0.3, 0.3) # clip angles to avoid flipping over
-        
-        self.roll = np.clip(self.roll, -0.3, 0.3)
+            self.thrust = (0.83 + (1.5*self.state[2] - 0.5*self.v_z))/angle_compensation # coefficients from pd_controller node - use unnormalized errors
+            self.pitch = 0.6*self.state[0]*self.x_normalize - 0.3*self.v_x
+            self.roll = 0.6*self.current_drone_state[1] + 0.3*self.v_y
+            self.pitch = np.clip(self.pitch, -0.31, 0.31) # clip angles to avoid flipping over
+        self.roll = np.clip(self.roll, -0.31, 0.31)
         print(f'{self.roll = }')
         self.orientation = Quaternion(*quaternion_from_euler(self.roll, self.pitch, 0))
     
@@ -276,8 +279,8 @@ class PayloadEnv(gym.Env):
 
     def gazebo_state_callback(self, data):
         """ Update the current state of the drone """
-        idx_q = 1
-        idx_p = -2
+        idx_q = 2
+        idx_p = -1
         self.current_drone_state[0] = data.pose[idx_q].position.x 
         self.current_drone_state[1] = data.pose[idx_q].position.y
         self.current_drone_state[2] = data.pose[idx_q].position.z
