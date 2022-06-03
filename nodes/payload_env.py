@@ -73,9 +73,9 @@ class PayloadEnv(gym.Env):
         self.desired_position = np.zeros(2)
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
-        self.k_alpha = 0.75 # position x error reward coefficient
-        self.k_alpha_z = 0.75
-        self.k_beta = 0.1 # velocity xz reward coefficient - velocity is not normalized and should have a lower coefficient?
+        self.k_alpha = 0.9 # position x error reward coefficient
+        self.k_alpha_z = 0.7
+        self.k_beta = 0.05 # velocity xz reward coefficient - velocity is not normalized and should have a lower coefficient?
         self.k_angle = 0.2 # swing angle error reward coefficient
         self.k_delta = 0.05 # swing error dot
         self.k_gamma = 0.05 # pitch angle reward coefficient
@@ -119,17 +119,17 @@ class PayloadEnv(gym.Env):
         # when should the episode finish and reset'
         print(f'{normed_pos_error = }')
         print(f'{normed_velocity = }')
-        if normed_pos_error < 0.1 and normed_velocity < 0.1 and time_used > 0.2: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
+        if normed_pos_error < 0.05 and normed_velocity < 0.05 and self.drone_pitch < 0.05 and time_used > 0.2: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
             print(f'Flag 1')
             done = True
-            vel_punish = 250*time_used/self.norm_normalize
-            if vel_punish > 150:
-                vel_punish = 150
-            reward += 200 - vel_punish # more reward for higher velocity
-        elif time_used > 40: # changed time stop from 50 -> 20 so reward is not just accumalated
+            vel_punish = 400*time_used/self.norm_normalize
+            if vel_punish > 300:
+                vel_punish = 300
+            reward += 400 - vel_punish # more reward for higher velocity
+        elif time_used > 35: # changed time stop from 50 -> 20 so reward is not just accumalated
             print(f'Flag 2')
             done = True
-            reward -= 100 
+            reward -= 150 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
             done = True
             reward -= 30
@@ -155,9 +155,8 @@ class PayloadEnv(gym.Env):
         self.e_y = 0
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
-            x_des = np.random.uniform(-10, 10) # avoiding overfitting
-            #x_des = 0
-            z_des = 20 #+ np.random.uniform(-2, 2) # +20 bias for same height as drone starts in 
+            x_des = 10*np.power(-1, np.random.randint(2)) # avoiding overfitting
+            z_des = 20 #+ np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
 
         else:
             x_des = 10
