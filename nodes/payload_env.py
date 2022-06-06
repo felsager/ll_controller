@@ -5,7 +5,7 @@ from gym import spaces
 import rospy
 import numpy as np
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
-from geometry_msgs.msg import TwistStamped, Quaternion
+from geometry_msgs.msg import Quaternion
 from mavros_msgs.srv import SetMode
 from mavros_msgs.srv import CommandBool
 from mavros_msgs.msg import AttitudeTarget
@@ -113,21 +113,15 @@ class PayloadEnv(gym.Env):
         normed_pos_error = np.linalg.norm([state[0]*self.x_normalize, state[1]]) # not normalized
         normed_velocity = np.linalg.norm(state[2:4]) # normalized - is this okay?
         reward = self.calculate_reward(state)
-        print(f'{state = }')
-        print(f'{reward = }')
         time_used = rospy.get_time() - self.start_time
         # when should the episode finish and reset'
-        print(f'{normed_pos_error = }')
-        print(f'{normed_velocity = }')
         if normed_pos_error < 0.05 and normed_velocity < 0.05 and self.drone_pitch < 0.05 and time_used > 0.2: # changed the normed velocity requirement from 0.1 to 0.25 - quadrotor reached goal and kept oscillating because of steady state velocity 
-            print(f'Flag 1')
             done = True
             vel_punish = 400*time_used/self.norm_normalize
             if vel_punish > 300:
                 vel_punish = 300
             reward += 400 - vel_punish # more reward for higher velocity
         elif time_used > 35: # changed time stop from 50 -> 20 so reward is not just accumalated
-            print(f'Flag 2')
             done = True
             reward -= 150 
         elif self.v_z < -6 or self.current_drone_state[2] < 5:
@@ -145,7 +139,7 @@ class PayloadEnv(gym.Env):
         self.pitch = 0
         self.roll = 0
         for i in range(3): # send multiple times to ensure it resets all
-            self.set_state(0, 0, 20)
+            self.set_state(0, 0, 19.95)
             self.reset_joints(model_name = "iris_load_test", \
                 joint_names = self.joint_names, \
                     joint_positions = self.joint_positions)
@@ -155,7 +149,7 @@ class PayloadEnv(gym.Env):
         self.e_y = 0
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
-            x_des = 10*np.power(-1, np.random.randint(2)) # avoiding overfitting
+            x_des = 10 #*np.power(-1, np.random.randint(2)) # avoiding overfitting
             z_des = 20 #+ np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
 
         else:
@@ -244,22 +238,18 @@ class PayloadEnv(gym.Env):
     
     def set_action(self, action):
         angle_compensation = abs(np.cos(self.drone_pitch)*np.cos(self.drone_roll))
-        print(f'{angle_compensation = }')
-        print(f'{action[0] = }')
         if angle_compensation < 0.5: # compensate angles higher than pi/3 (saturation)
             angle_compensation = 0.5 
         if not self.pd_control:
             self.thrust = 0.83 + 0.17*action[0] # maps thrust from [-1, 1] to [0.4, 1] where 0 maps to 0.7 which is hover equilbrium
             self.pitch = 0.31*action[1] # range from -pi/6 to pi/6
             self.roll = 0.6*self.current_drone_state[1] + 0.3*self.v_y
-            print(f'{[self.thrust, self.pitch] = }')
         else:
-            self.thrust = (0.83 + (1.5*self.state[2] - 0.5*self.v_z))/angle_compensation # coefficients from pd_controller node - use unnormalized errors
+            self.thrust = (0.83 + (1.5*self.state[1] - 0.5*self.v_z))/angle_compensation # coefficients from pd_controller node - use unnormalized errors
             self.pitch = 0.6*self.state[0]*self.x_normalize - 0.3*self.v_x
             self.roll = 0.6*self.current_drone_state[1] + 0.3*self.v_y
             self.pitch = np.clip(self.pitch, -0.31, 0.31) # clip angles to avoid flipping over
         self.roll = np.clip(self.roll, -0.31, 0.31)
-        print(f'{self.roll = }')
         self.orientation = Quaternion(*quaternion_from_euler(self.roll, self.pitch, 0))
     
     def control_callback(self, event):
