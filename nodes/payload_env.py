@@ -74,7 +74,7 @@ class PayloadEnv(gym.Env):
         
         # Reward coefficients - should add up to two (they are already normalized and the reward range should be [-1 to 1])
         self.k_alpha = 0.9 # position x error reward coefficient
-        self.k_alpha_z = 0.7
+        self.k_alpha_z = 0.7 # position z error reward coefficient
         self.k_beta = 0.05 # velocity xz reward coefficient - velocity is not normalized and should have a lower coefficient?
         self.k_angle = 0.2 # swing angle error reward coefficient
         self.k_delta = 0.05 # swing error dot
@@ -110,6 +110,7 @@ class PayloadEnv(gym.Env):
         self.set_action(action) 
         state = self.calculate_state()
         self.state = state
+        print(state)
         normed_pos_error = np.linalg.norm([state[0]*self.x_normalize, state[1]]) # not normalized
         normed_velocity = np.linalg.norm(state[2:4]) # normalized - is this okay?
         reward = self.calculate_reward(state)
@@ -149,16 +150,14 @@ class PayloadEnv(gym.Env):
         self.e_y = 0
         if not self.infinite_goal:
             # generate random side of both x and z where the desired position is placed 
-            x_des = 10 #*np.power(-1, np.random.randint(2)) # avoiding overfitting
-            z_des = 20 #+ np.random.uniform(-1, 1) # +20 bias for same height as drone starts in 
+            x_des = 10 #*np.power(-1, np.random.randint(2)) # variance in x
+            z_des = 20 #+ np.random.uniform(-1, 1) # +20 bias for same height as drone starts in - variance in z
 
         else:
             x_des = 10
             z_des = 20
         self.move_goal_sphere(x_des, y_des, z_des)
-        #self.x_normalize = abs(x_des)
-        self.x_normalize = 10
-        #self.z_normalize = abs(z_des-20) # remove bias of 20
+        self.x_normalize = 10 # maximum desired position used for normalization
         self.z_normalize = 1
         self.norm_normalize = abs(x_des)
         self.desired_position = [x_des, z_des]

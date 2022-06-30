@@ -1,0 +1,95 @@
+<?xml version="1.0" ?>
+<sdf version='1.5'>
+  <model name='iris_load_test'>
+    <include>
+      <uri>model://iris</uri>
+      <pose> 0 0 0.06 0 0 0 </pose>
+    </include>
+    <include>
+      <uri>model://cable</uri>
+      <pose> 0 0 0.06 -1.5707 0 0 </pose>
+    </include>
+    <include>
+      <uri>model://payload</uri>
+      <pose> 0 0 -0.5025 0 0 0 </pose>
+    </include>
+    <joint name="iris_cable_joint" type="revolute">
+        <child>iris::base_link</child>
+        <parent>cable::link_1</parent>
+        <pose> 0 0 0 0 0 0 </pose>
+        <axis>
+        <xyz>1 0 0</xyz>
+        <limit>
+          <lower>-1.79769e+308</lower>
+          <upper>1.79769e+308</upper>
+          <effort>-1</effort>
+          <velocity>-1</velocity>
+        </limit>
+        <dynamics>
+          <spring_reference>0</spring_reference>
+          <spring_stiffness>0</spring_stiffness>
+          <damping>0.5</damping>
+        </dynamics>
+      </axis>
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper> 
+          <limit>
+            <cfm>0</cfm>
+            <erp>0.2</erp> <!-- changing to higher seems to improve realism-->
+          </limit>
+          <suspension>
+            <cfm>0</cfm>
+            <erp>0.2</erp>
+          </suspension>
+        </ode>
+      </physics>
+    </joint>
+    <joint name='cable_payload_joint' type='revolute'>
+      <parent>cable::link_20</parent>
+      <child>payload::payload_link</child>
+      <pose>0 0 0.05 0 -0 0</pose>
+      <axis>
+        <xyz>1 0 0</xyz>
+        <limit>
+          <lower>-1.79769e+308</lower>
+          <upper>1.79769e+308</upper>
+          <effort>-1</effort>
+          <velocity>-1</velocity>
+        </limit>
+        <dynamics>
+          <spring_reference>0</spring_reference>
+          <spring_stiffness>0</spring_stiffness>
+          <damping>0.5</damping>
+        </dynamics>
+      </axis>
+      <!--<axis2>
+        <xyz>1 0 0</xyz>
+        <limit>
+          <lower>-1.79769e+308</lower>
+          <upper>1.79769e+308</upper>
+          <effort>-1</effort>
+          <velocity>-1</velocity>
+        </limit>
+        <dynamics>
+          <spring_reference>0</spring_reference>
+          <spring_stiffness>0</spring_stiffness>
+          <damping>0.05</damping>
+        </dynamics>
+      </axis2>-->
+      <physics>
+        <ode>
+          <implicit_spring_damper>1</implicit_spring_damper> 
+          <limit>
+            <cfm>0</cfm>
+            <erp>0.2</erp>
+          </limit>
+          <suspension>
+            <cfm>0</cfm>
+            <erp>0.2</erp>
+          </suspension>
+        </ode>
+      </physics>
+    </joint>
+  </model>
+</sdf>
