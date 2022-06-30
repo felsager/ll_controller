@@ -14,10 +14,11 @@ The following guide assumes that you use Ubuntu 20.04, have Gazebo 11 and Roboti
 **Running the simulation and Reinforcement Learning Controller and Training**
 1. In a terminal change directory to "PX4-Autopilot" 
 2. Run the following line: "bash run.sh"
-3. In the terminal open a new window and change directory into this repository "ll_controller"
-4. Run the Python file "run_env.py" with rosrun, which will run the final controller deterministic: "rosrun ll_controller run_env.py"
-5. The Proportional Derivative controller can also be tested by changing "pd_control" to True in line 16 of "run_env.py"
-6. If further training is wanted, increase the run_no, and change the variable "training" to True
+3. In a new terminal run the following line "rostopic echo /gazebo/link_states/name" - if "goal_sphere::link" is last in the list of names change variable "idx_q" in "payload_env.py" to 1 and "idx_p" to -2 - if "goal_sphere::link" is the second upper name then the variables should be "idx_q=2" and "idx_p=-1"
+4. In the terminal open a new window and change directory into this repository "ll_controller"
+5. Run the Python file "run_env.py" with rosrun, which will run the final controller deterministic: "rosrun ll_controller run_env.py"
+6. The Proportional Derivative controller can also be tested by changing "pd_control" to True in line 16 of "run_env.py"
+7. If further training is wanted, increase the run_no, and change the variable "training" to True
 
 Note:
 The custom environment where tunable parameters such as reward shape ect. is the file "payload_env.py" 
